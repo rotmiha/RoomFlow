@@ -25,7 +25,7 @@ type Reservation = {
 };
 
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(/\/$/, "");
-
+const = ;
 function App() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [building, setBuilding] = useState("");
