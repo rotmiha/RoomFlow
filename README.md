@@ -1,5 +1,18 @@
 # Sistem za rezervacijo sob (RoomFlow)
 
+[![CI/CD](https://github.com/rotmiha/RoomFlow/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/rotmiha/RoomFlow/actions/workflows/ci-cd.yml)
+
+**Nameščena aplikacija:** [RoomFlow na Renderju](https://roomflow-j5bf.onrender.com)
+
+## CI/CD cevovod
+
+Workflow [CI/CD](.github/workflows/ci-cd.yml) se sproži ob zahtevku za združitev (pull request) v vejo `main` in ob potisku sprememb (push) v to vejo. Faze `lint`, `build` in `test` se izvajajo vzporedno:
+
+- **Lint:** preveri kakovost kode frontenda in backenda.
+- **Build:** prevede oba dela aplikacije, shrani gradbene artefakte ter pripravi Docker sliko. S PostgreSQL preveri delovanje zapakirane aplikacije (API, uporabniški vmesnik in testni podatki) in shrani preverjeno sliko.
+- **Test:** izvede teste frontenda in backenda ter shrani poročila o pokritosti kode.
+- **Deploy:** po uspešnih predhodnih fazah in samo ob potisku v `main` objavi preverjeno Docker sliko v GitHub Container Registry (GHCR), jo namesti na Render ter preveri delovanje javne aplikacije.
+
 ## Opis projekta
 
 Projekt predstavlja spletno aplikacijo za pregledovanje razpoložljivosti sob in upravljanje njihovih rezervacij. Namen sistema je poenostaviti postopek rezervacije ter omogočiti pregled nad uporabo prostorov.
