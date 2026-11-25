@@ -10,14 +10,175 @@ permissions:
   contents: read
 
 jobs:
-  prepare:
-    name: Prepare workflow
+  lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
+    timeout-minutes: 10
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm ci --prefix backend
+      - run: npm run lint --prefix frontend
+      - run: npm run lint --prefix backend
 
-      - name: Confirm workflow setup
-        run: echo "CI/CD workflow is ready."
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: roomflow
+          POSTGRES_PASSWORD: roomflow
+          POSTGRES_DB: roomflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U roomflow -d roomflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://roomflow:roomflow@localhost:5432/roomflow
+      VITE_API_URL: ${{ vars.PRODUCTION_API_URL || '/api' }}
+      VITE_TEST_USER_ID: ${{ vars.PRODUCTION_DEMO_USER_ID || '00000000-0000-4000-8000-000000000001' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm ci --prefix backend
+      - run: npm run build --prefix frontend
+      - run: npm run build --prefix backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-build
+          path: |
+            backend/build/
+            backend/prisma/
+            backend/prisma.config.ts
+            backend/package.json
+            backend/package-lock.json
+          if-no-files-found: error
+      # Package the already compiled app. Dockerfile does not compile source.
+      - name: Package deployable image
+        run: |
+          docker build --platform linux/amd64 -t roomflow:${{ github.sha }} .
+      - name: Verify packaged application with PostgreSQL
+        run: |
+          docker run -d --name roomflow-smoke --network host \
+            -e DATABASE_URL -e SEED_DEMO_DATA=true \
+            roomflow:${{ github.sha }}
+          trap 'docker logs roomflow-smoke' EXIT
+          curl --fail --retry 30 --retry-delay 2 --retry-all-errors http://localhost:3000/api/health
+          curl --fail http://localhost:3000/ | grep '<div id="root">'
+          curl --fail http://localhost:3000/api/rooms | grep 'Soba A'
+      - name: Save tested image
+        run: |
+          docker save roomflow:${{ github.sha }} | gzip > roomflow-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roomflow-image
+          path: roomflow-image.tar.gz
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm ci --prefix backend
+      - name: Test frontend
+        id: frontend-tests
+        run: npm run test:coverage --prefix frontend
+      - name: Test backend
+        if: ${{ !cancelled() && steps.frontend-tests.outcome != 'skipped' }}
+        run: npm run test:coverage --prefix backend
+      - name: Save coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            frontend/coverage/
+            backend/coverage/
+          if-no-files-found: error
+
+  deploy:
+    needs: [lint, build, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: roomflow-image
+          path: release
+      - name: Publish the build artifact to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_USER: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          IMAGE="ghcr.io/${REPOSITORY,,}:${GITHUB_SHA}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
+          gunzip -c release/roomflow-image.tar.gz | docker load
+          docker tag "roomflow:${GITHUB_SHA}" "$IMAGE"
+          docker push "$IMAGE"
+          docker tag "$IMAGE" "ghcr.io/${REPOSITORY,,}:production"
+          docker push "ghcr.io/${REPOSITORY,,}:production"
+          echo "IMAGE_URL=$IMAGE" >> "$GITHUB_ENV"
+      - name: Validate deployment configuration
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          test -n "$RENDER_API_KEY" || { echo 'Missing production secret RENDER_API_KEY'; exit 1; }
+          test -n "$RENDER_SERVICE_ID" || { echo 'Missing production secret RENDER_SERVICE_ID'; exit 1; }
+          test -n "$PRODUCTION_URL" || { echo 'Missing production variable PRODUCTION_URL'; exit 1; }
+      - name: Deploy image and verify public application
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: node scripts/deploy-render.mjs

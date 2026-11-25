@@ -34,6 +34,7 @@ Podrobnejši opis je v dokumentu [Arhitektura in tehnološki sklad](docs/04-arhi
 - [Arhitektura in tehnološki sklad](docs/04-arhitektura-in-tehnoloski-sklad.md)
 - [Uporabniške zgodbe](docs/05-uporabniske-zgodbe.md)
 - [Wireframes](docs/06-wireframes.md)
+- [CI/CD in namestitev na Render](docs/08-ci-cd.md)
 - [Arhitekturne odločitve](docs/adr/)
 
 ## Struktura projekta

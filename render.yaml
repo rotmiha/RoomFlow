@@ -1,0 +1,29 @@
+# The image is produced by GitHub Actions, never rebuilt by Render.
+# Bootstrap: publish the first image, then create this Blueprint (see docs/08-ci-cd.md).
+services:
+  - type: web
+    name: roomflow
+    runtime: image
+    plan: free
+    region: frankfurt
+    image:
+      url: ghcr.io/rotmiha/roomflow:production
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SEED_DEMO_DATA
+        value: 'true'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: roomflow-db
+          property: connectionString
+
+databases:
+  - name: roomflow-db
+    plan: free
+    region: frankfurt
+    postgresMajorVersion: '16'
+    databaseName: roomflow
+    user: roomflow
+    ipAllowList: []
